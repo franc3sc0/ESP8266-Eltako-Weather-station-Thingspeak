@@ -34,9 +34,10 @@
 #include "PrivateEnvVariables.h"
 
 #define dlytime 10
-#define readInterval 1000      // read from serial every 1 second
-// #define trxInterval 60000   // transmit to ThingSpeak every 60 seconds
+#define readInterval 1000      // read from serial every x milliseconds
 #define readToTrxRatio 59      // number of read cycles to wait before transmitting data
+#define trxRetryDelay 2000     // delay between trx attempts to ThingSpeak
+#define tsHTTP_OK 200          // HTTP 200 return code from ThingSpeak
 
 #define DHTPIN 4      // DHT Sensor connected to digital pin 2.
 #define DHTTYPE DHT11 // Type of DHT sensor.
@@ -44,12 +45,13 @@
 #define BUFFER_SIZE 64
 #define MSG_SIZE 40
 
-// Following block added for debugging over web server
-#include <Ethernet.h>
-byte mac[] = {
+// Web server for debugging
+/* #include <Ethernet.h>
+  byte mac[] = {
   0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0x01
-};
-EthernetServer server(80);
+  };
+  EthernetServer server(80);
+*/
 
 // Initialize the Wifi client library. Necessary for ThingSpeak to work.
 WiFiClient client;
@@ -59,6 +61,8 @@ DHT dht(DHTPIN, DHTTYPE);
 
 char recv_str[BUFFER_SIZE];
 long rssi;
+int tsReturnCode;
+int trxRetries;
 
 float temperature = 0;
 float windspeed = 0;
@@ -200,8 +204,8 @@ int connectWifi()
 }
 
 
-// Following function  added for debugging
-void listenForWebClients() {
+// Web server for debugging
+/* void listenForWebClients() {
   //listen for incoming web clients
   char buffer[90];
 
@@ -249,8 +253,8 @@ void listenForWebClients() {
     client.stop();
     Serial.println("client disonnected");
   }
-}
-
+  }
+*/
 
 
 void setup()
@@ -311,20 +315,32 @@ void loop()
       ThingSpeak.setField(6, sun_south);
       ThingSpeak.setField(7, sun_west);
       ThingSpeak.setField(8, sun_east);
-      ThingSpeak.writeFields(tsDataChannelID, tsDataWriteAPIKey);
+
+      trxRetries = 0;
+      do {
+        tsReturnCode = ThingSpeak.writeFields(tsDataChannelID, tsDataWriteAPIKey);
+        trxRetries++;
+        if ( tsReturnCode != tsHTTP_OK ) delay(trxRetryDelay);
+      } while ( (tsReturnCode != tsHTTP_OK) || (trxRetries > 3) );
 
       ThingSpeak.setField(1, rssi);
       ThingSpeak.setField(2, temperatureInternal);
       ThingSpeak.setField(3, umidityInternal);
       ThingSpeak.setField(4, readErrorCount);
-      ThingSpeak.writeFields(tsInternalsChannelID, tsInternalsWriteAPIKey);
+
+      trxRetries = 0;
+      do {
+        tsReturnCode = ThingSpeak.writeFields(tsInternalsChannelID, tsInternalsWriteAPIKey);
+        trxRetries++;
+        if ( tsReturnCode != tsHTTP_OK ) delay(trxRetryDelay);
+      } while ( (tsReturnCode != tsHTTP_OK) || (trxRetries > 3) );
 
       readCycles = 0;
     }
     readCycles++;
     prevRainValue = rain;
   }
-  // Following block added for debugging
-  listenForWebClients();
+  // Web server for for debugging
+  /* listenForWebClients(); */
 }
 
