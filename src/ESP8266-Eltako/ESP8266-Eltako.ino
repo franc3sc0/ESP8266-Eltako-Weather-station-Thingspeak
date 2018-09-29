@@ -10,7 +10,7 @@
    CREATED: August 26, 2018
 
    ISSUES
-   - [Solved] A but w/ Board Manager v2.4.1 would consume 56 Bytes of memory on every call of ThingSpeak.writeFields()
+   - [Solved] A bug w/ Board Manager v2.4.1 would consume 56 Bytes of memory on every call of ThingSpeak.writeFields()
               (https://github.com/esp8266/Arduino/issues/4497). Used Serial.println("Free Heap: " + String( ESP.getFreeHeap() )
               to diagnose memory use.
 */
@@ -33,7 +33,7 @@
 #define TRX_RETRY_DELAY 5000          // Delay between transmission attempts to ThingSpeak in ms
 #define TS_HTTP_OK 200                // HTTP 200 return code from ThingSpeak
 #define TS_MIN_UPDATE_FREQUENCY 20    // Number of read intervals to wait before sending new data to ThingSpeak (which would throw an error otherwise)
-#define WINDSPEED_LIMIT 8.0           // Wind speed limit above which data is immediately sent to ThingSpeak
+#define WINDSPEED_LIMIT 5.0           // Wind speed limit above which data is immediately sent to ThingSpeak
 #define MEM_LOWER_LIMIT 10000         // Heap memory limit under which ESP is restarted
 
 
@@ -172,6 +172,53 @@ void updateDHT()
 }
 
 
+float maxOfArray(float myArray[])
+// Return the maximum value in an array
+{
+  size_t nElems = sizeof(myArray) / sizeof(myArray[0]);
+  float maxValue = myArray[0];
+
+  for (i = 1; i < nElems; ++i) {
+    if ( myArray[i] > maxValue ) {
+      maxValue = myArray[i];
+    }
+  }
+  return maxValue;
+}
+
+
+float avgOfArray(float myArray, int excludeValue)
+// Return the average of an array, excluding certain values excludeValue from calculation
+{
+  size_t nElems = sizeof(myArray) / sizeof(myArray[0]);
+  float sumValue = 0;
+  int sumElems = 0;
+
+  for (i = 0; i < nElems; ++i) {
+    if ( myArray[i] != excludeValue ) {
+      sumValue = sumValue + myArray[i];
+      sumElems++;
+    }
+  }
+  return ( sumValue / sumElems);
+}
+
+
+bool boolOfArray(bool myArray[])
+// Return true if at least one value in array is true, false otherwise
+{
+  size_t nElems = sizeof(myArray) / sizeof(myArray[0]);
+  bool isTrue = false;
+
+  for (i = 1; i < nElems; ++i) {
+    if ( myArray[i] == true ) {
+      isTrue = true;
+    }
+  }
+  return isTrue;
+}
+
+
 int connectWifi()
 // Connect to Wifi
 {
@@ -220,6 +267,7 @@ void setup()
   httpUpdater.setup(&httpServer, update_path, update_username, update_password);
   httpServer.begin();
   MDNS.addService("http", "tcp", 80);
+  //Serial.println("HTTPUpdateServer ready! Open http://%s.local%s in your browser and login with username '%s' and password '%s'\n", host, update_path, update_username, update_password);
 }
 
 
@@ -227,16 +275,15 @@ void loop()
 {
   long rssi;
   int upTime;
-  boolean strongWind;
-  boolean prevStrongWind;
+  //boolean strongWind;
+  //boolean prevStrongWind;
   unsigned short int freeMem;
   unsigned short int tsReturnCode;
   unsigned long currentReadMillis;
   unsigned int trxRetries;
-  float avgTemp;
-  float avgWind;
-  float maxWind;
-  float tempValues[READ_TO_TRX_RATIO];
+  //float avgTemp;
+  //float avgWind;
+  //float maxWind;
   float windValues[READ_TO_TRX_RATIO];
   boolean rainValues[READ_TO_TRX_RATIO];
 
@@ -248,9 +295,8 @@ void loop()
   if (currentReadMillis - previousReadMillis >= READ_INTERVAL) {
     previousReadMillis = currentReadMillis;
 
+    // Read serial bus and store certain values in arrays
     read_serial();
-    // Store values in arrays
-    tempValues[readCycles] = temperature;
     windValues[readCycles] = windspeed;
     rainValues[readCycles] = rain;
 
@@ -271,19 +317,16 @@ void loop()
       upTime = round( currentReadMillis / (1000 * 60) );
 
       // Determine whether there's strong wind
-      if (windspeed > WINDSPEED_LIMIT) strongWind = true;
+      //if (windspeed > WINDSPEED_LIMIT) strongWind = true;
 
       // Transmit values to ThingSpeak every READ_TO_TRX_RATIO cycles
-      // If it starts raining or there is strong wind: transmit values as soon as possible, but at least TS_MIN_UPDATE_FREQUENCY cycles after last transmission
-      if ( (readCycles >= READ_TO_TRX_RATIO) ||
-           ( (rain == true) && (prevRainValue == false) && (readCycles >= TS_MIN_UPDATE_FREQUENCY) ) ||
-           ( (strongWind == true) && (prevStrongWind == false) && (readCycles >= TS_MIN_UPDATE_FREQUENCY)) ) {
+      if ( readCycles >= READ_TO_TRX_RATIO ) {
 
         ThingSpeak.setField(1, temperature);
         ThingSpeak.setField(2, daylight);
-        ThingSpeak.setField(3, dawn);
-        ThingSpeak.setField(4, rain);
-        ThingSpeak.setField(5, windspeed);
+        ThingSpeak.setField(3, boolOfArray(rainValues) );
+        ThingSpeak.setField(4, maxOfArray(windValues) );
+        ThingSpeak.setField(5, avgOfArray(windValues, -1) );
         ThingSpeak.setField(6, sun_south);
         ThingSpeak.setField(7, sun_west);
         ThingSpeak.setField(8, sun_east);
@@ -312,15 +355,14 @@ void loop()
 
         // Flush weather values
         for (int i = 0; i < READ_TO_TRX_RATIO; i++) {
-          tempValues[i] = 0;
-          windValues[i] = 0;
+          windValues[i] = -1;
           rainValues[i] = false;
         }
       }
     }
     readCycles++;
-    prevRainValue = rain;
-    prevStrongWind = strongWind;
+    prevRainValue = boolOfArray(rainValues);
+    //prevStrongWind = strongWind;
   }
   // Web server for for debugging
   /* listenForWebClients(); */
