@@ -37,14 +37,6 @@
 #define MEM_LOWER_LIMIT 10000         // Heap memory limit under which ESP is restarted
 
 
-// Web server for debugging
-/* #include <Ethernet.h>
-  byte mac[] = {
-  0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0x01
-  };
-  EthernetServer server(80);
-*/
-
 // Initialize the Wifi client library. Necessary for ThingSpeak to work.
 WiFiClient client;
 
@@ -192,59 +184,6 @@ int connectWifi()
   }
   digitalWrite(LED_BUILTIN, HIGH);
 }
-
-
-// Web server for debugging
-/* void listenForWebClients() {
-  //listen for incoming web clients
-  char buffer[90];
-
-  EthernetClient client = server.available();
-  if (client) {
-    Serial.println("new client");
-    // an http request ends with a blank line
-    boolean currentLineIsBlank = true;
-    while (client.connected()) {
-      if (client.available()) {
-        char c = client.read();
-        Serial.write(c);
-        // if you've gotten to the end of the line (received a newline
-        // character) and the line is blank, the http request has ended,
-        // so you can send a reply
-        if (c == '\n' && currentLineIsBlank) {
-          // send a standard http response header
-          client.print("HTTP/1.1 200 OK\nContent-Type: text/html\nConnection: close\nRefresh: 5\n\n<!DOCTYPE HTML>");
-          snprintf (buffer, 90, "<html>\nRawData.value %s<br>\n", recv_str);
-          client.print(buffer);
-          snprintf (buffer, 90, "CheckSum.value %d<br>\nRecvSum.value %d<br>Temperature.value ", checksum, recv_sum);
-          client.print(buffer);
-          client.print(temperature);
-          snprintf (buffer, 90, "<br>Daylight.value %d<br>\nDawn.value %d<br>\nRain.value %d<br>\nWindspeed.value ", daylight, dawn, rain);
-          client.print(buffer);
-          client.print (windspeed);
-          snprintf (buffer, 90, "<br>SunSouth.value %d<br>\nSunWest.value %d<br>\nSunEast.value %d<br>", sun_south, sun_west, sun_east);
-          client.print(buffer);
-          client.print("</html>");
-          break;
-        }
-        if (c == '\n') {
-          // you're starting a new line
-          currentLineIsBlank = true;
-        }
-        else if (c != '\r') {
-          // you've gotten a character on the current line
-          currentLineIsBlank = false;
-        }
-      }
-    }
-    // give the web browser time to receive the data
-    delay(1);
-    // close the connection:
-    client.stop();
-    Serial.println("client disonnected");
-  }
-  }
-*/
 
 
 void setup()
