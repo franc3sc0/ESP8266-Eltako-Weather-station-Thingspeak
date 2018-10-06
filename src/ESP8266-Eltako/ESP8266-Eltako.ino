@@ -16,12 +16,13 @@
 */
 
 #include <ESP8266WiFi.h>
-#include <ESP8266WebServer.h>
-#include <ESP8266mDNS.h>
-#include <ESP8266HTTPUpdateServer.h>
 #include <ThingSpeak.h>
 #include <DHT.h>
 #include "PrivateEnvVariables.h"
+// Libraries for web server and over-the-air HTTP update server.
+#include <ESP8266WebServer.h>
+#include <ESP8266mDNS.h>
+#include <ESP8266HTTPUpdateServer.h>
 
 #define BUFFER_SIZE 64
 #define MSG_SIZE 40
@@ -29,12 +30,12 @@
 #define DHTTYPE DHT11                 // Type of DHT sensor
 #define DELAY_MS 10                   // Delay in ms
 #define READ_INTERVAL 1000            // Read from serial every x ms
-#define READ_TO_TRX_RATIO 59          // Number of read cycles to wait before transmitting data
+#define READ_TO_TRX_RATIO 60          // Number of read cycles betweeen transmitting data to ThingSpeak
+#define WEATHER_BUFFER 59             // Size of array to store weather values
 #define TRX_RETRY_DELAY 5000          // Delay between transmission attempts to ThingSpeak in ms
 #define TS_HTTP_OK 200                // HTTP 200 return code from ThingSpeak
-#define TS_MIN_UPDATE_FREQUENCY 20    // Number of read intervals to wait before sending new data to ThingSpeak (which would throw an error otherwise)
-#define WINDSPEED_LIMIT 5.0           // Wind speed limit above which data is immediately sent to ThingSpeak
 #define MEM_LOWER_LIMIT 10000         // Heap memory limit under which ESP is restarted
+#define WIND_ARRAY_FILLER -1.0        // Value to fill wind array with at initialization
 
 
 // Initialize the Wifi client library. Necessary for ThingSpeak to work.
@@ -48,6 +49,8 @@ ESP8266WebServer httpServer(80);
 ESP8266HTTPUpdateServer httpUpdater;
 
 char recv_str[BUFFER_SIZE];
+float windValues[WEATHER_BUFFER];
+boolean rainValues[WEATHER_BUFFER];
 
 float temperature = 0;
 float windspeed = 0;
@@ -63,12 +66,13 @@ int checksum = 0;
 
 float temperatureInternal = 0;
 float umidityInternal = 0;
-boolean prevRainValue = false;
-//float WINDSPEED_LIMIT = 8;
 
 unsigned short int readCycles = 0;
+unsigned short int weatherArrayIndex = 0;
 unsigned long previousReadMillis = 0;
 
+// For debugging
+// char webDebugOutput[10000];
 
 // WiFiEventHandler gotIpEventHandler, disconnectedEventHandler;
 
@@ -133,7 +137,7 @@ void convert_rcvstr (char *string)
 }
 
 
-void read_serial()
+void readSerial()
 // Read the weather values from the serial bus
 {
   int index;
@@ -164,7 +168,7 @@ void read_serial()
 
 
 void updateDHT()
-// Get the most recent readings for temperature and humidity.
+// Get the most recent readings for internal temperature and humidity.
 {
   // To return Fahrenheit use dht.readTemperature(true)
   temperatureInternal = dht.readTemperature();
@@ -172,52 +176,59 @@ void updateDHT()
 }
 
 
-float maxOfArray(float myArray[])
-// Return the maximum value in an array
+float maxWind()
+// Return the maximum value in wind array
 {
-  size_t nElems = sizeof(myArray) / sizeof(myArray[0]);
-  float maxValue = myArray[0];
+  float maxValue = windValues[0];
 
-  for (i = 1; i < nElems; ++i) {
-    if ( myArray[i] > maxValue ) {
-      maxValue = myArray[i];
+  for (size_t i = 1; i < WEATHER_BUFFER; ++i) {
+    if ( windValues[i] > maxValue ) {
+      maxValue = windValues[i];
     }
   }
   return maxValue;
 }
 
 
-float avgOfArray(float myArray, int excludeValue)
-// Return the average of an array, excluding certain values excludeValue from calculation
+float avgWind()
+// Return the average value in wind array, excluding 'WIND_ARRAY_FILLER' from calculation
 {
-  size_t nElems = sizeof(myArray) / sizeof(myArray[0]);
   float sumValue = 0;
   int sumElems = 0;
 
-  for (i = 0; i < nElems; ++i) {
-    if ( myArray[i] != excludeValue ) {
-      sumValue = sumValue + myArray[i];
+  for (size_t i = 0; i < WEATHER_BUFFER; ++i) {
+    if ( windValues[i] != WIND_ARRAY_FILLER ) {
+      sumValue += windValues[i];
       sumElems++;
     }
   }
-  return ( sumValue / sumElems);
+
+  if ( sumElems > 0 ) {
+    return ( sumValue / sumElems );
+  } else {
+    return 0;
+  }
 }
 
 
-bool boolOfArray(bool myArray[])
-// Return true if at least one value in array is true, false otherwise
+boolean itsRaining()
+// Return true if at least one value in rain array is true, false otherwise
 {
-  size_t nElems = sizeof(myArray) / sizeof(myArray[0]);
-  bool isTrue = false;
-
-  for (i = 1; i < nElems; ++i) {
-    if ( myArray[i] == true ) {
-      isTrue = true;
+  for (size_t i = 0; i < WEATHER_BUFFER; ++i) {
+    if ( rainValues[i] == true ) {
+      return true;
     }
   }
-  return isTrue;
+  return false;
 }
 
+/*
+  void webDebug()
+  // Output string used for debugging purposes on call to http server
+  {
+  httpServer.send(200, "text/plain", webDebugOutput);
+  }
+*/
 
 int connectWifi()
 // Connect to Wifi
@@ -262,12 +273,21 @@ void setup()
 
   ThingSpeak.begin(client);
 
+  // For debugging, return wind values through http server
+  // httpServer.on("/debug", webDebug);
+
   // Over-the-air HTTP update service, initialization sequence
   MDNS.begin(host);
   httpUpdater.setup(&httpServer, update_path, update_username, update_password);
   httpServer.begin();
   MDNS.addService("http", "tcp", 80);
   //Serial.println("HTTPUpdateServer ready! Open http://%s.local%s in your browser and login with username '%s' and password '%s'\n", host, update_path, update_username, update_password);
+
+  // Intialite weather arrays
+  for (size_t i = 0; i < WEATHER_BUFFER; ++i) {
+    windValues[i] = WIND_ARRAY_FILLER;
+    rainValues[i] = false;
+  }
 }
 
 
@@ -275,19 +295,12 @@ void loop()
 {
   long rssi;
   int upTime;
-  //boolean strongWind;
-  //boolean prevStrongWind;
   unsigned short int freeMem;
   unsigned short int tsReturnCode;
   unsigned long currentReadMillis;
   unsigned int trxRetries;
-  //float avgTemp;
-  //float avgWind;
-  //float maxWind;
-  float windValues[READ_TO_TRX_RATIO];
-  boolean rainValues[READ_TO_TRX_RATIO];
 
-  // Client for over-the-air HTTP image update service
+  // Client for both web server and over-the-air HTTP image update service
   httpServer.handleClient();
 
   currentReadMillis = millis();
@@ -295,13 +308,23 @@ void loop()
   if (currentReadMillis - previousReadMillis >= READ_INTERVAL) {
     previousReadMillis = currentReadMillis;
 
-    // Read serial bus and store certain values in arrays
-    read_serial();
-    windValues[readCycles] = windspeed;
-    rainValues[readCycles] = rain;
+    // Read serial bus
+    readSerial();
+    readCycles++;
 
-    // Transmit values to ThingSpeak only from dawn till dusk
-    if ( daylight > 0 ) {
+    // Store wind, rain values in arrays
+    if ( weatherArrayIndex > WEATHER_BUFFER ) {
+      weatherArrayIndex = 0;
+    }
+    windValues[weatherArrayIndex] = windspeed;
+    rainValues[weatherArrayIndex] = rain;
+    weatherArrayIndex++;
+
+    // For debugging
+    //sprintf(webDebugOutput + strlen(webDebugOutput), "After readSerial: %u %u %f \n", currentReadMillis, readCycles, windValues[readCycles]);
+
+    // Transmit values to ThingSpeak every READ_TO_TRX_RATIO cycles and only from dawn till dusk
+    if ( ( daylight > 0 ) && ( readCycles >= READ_TO_TRX_RATIO ) ) {
 
       // Read internal temperature and humidity
       updateDHT();
@@ -316,55 +339,53 @@ void loop()
       // Calculate uptime
       upTime = round( currentReadMillis / (1000 * 60) );
 
-      // Determine whether there's strong wind
-      //if (windspeed > WINDSPEED_LIMIT) strongWind = true;
+      ThingSpeak.setField(1, temperature);
+      ThingSpeak.setField(2, daylight);
+      ThingSpeak.setField(3, itsRaining() );
+      ThingSpeak.setField(4, maxWind() );
+      ThingSpeak.setField(5, avgWind() );
+      ThingSpeak.setField(6, sun_south);
+      ThingSpeak.setField(7, sun_west);
+      ThingSpeak.setField(8, sun_east);
 
-      // Transmit values to ThingSpeak every READ_TO_TRX_RATIO cycles
-      if ( readCycles >= READ_TO_TRX_RATIO ) {
+      trxRetries = 0;
+      do {
+        tsReturnCode = ThingSpeak.writeFields(tsDataChannelID, tsDataWriteAPIKey);
+        trxRetries++;
+        if ( tsReturnCode != TS_HTTP_OK ) delay(TRX_RETRY_DELAY);
+      } while ( not( (tsReturnCode == TS_HTTP_OK) || (trxRetries > 3)) ); // stays in loop until either HTTP response ok or more than x retries
 
-        ThingSpeak.setField(1, temperature);
-        ThingSpeak.setField(2, daylight);
-        ThingSpeak.setField(3, boolOfArray(rainValues) );
-        ThingSpeak.setField(4, maxOfArray(windValues) );
-        ThingSpeak.setField(5, avgOfArray(windValues, -1) );
-        ThingSpeak.setField(6, sun_south);
-        ThingSpeak.setField(7, sun_west);
-        ThingSpeak.setField(8, sun_east);
+      ThingSpeak.setField(1, rssi);
+      ThingSpeak.setField(2, temperatureInternal);
+      ThingSpeak.setField(3, umidityInternal);
+      ThingSpeak.setField(4, upTime);
+      ThingSpeak.setField(5, freeMem);
 
-        trxRetries = 0;
-        do {
-          tsReturnCode = ThingSpeak.writeFields(tsDataChannelID, tsDataWriteAPIKey);
-          trxRetries++;
-          if ( tsReturnCode != TS_HTTP_OK ) delay(TRX_RETRY_DELAY);
-        } while ( not( (tsReturnCode == TS_HTTP_OK) || (trxRetries > 3)) ); // stays in loop until either HTTP response ok or more than x retries
+      trxRetries = 0;
+      do {
+        tsReturnCode = ThingSpeak.writeFields(tsInternalsChannelID, tsInternalsWriteAPIKey);
+        trxRetries++;
+        if ( tsReturnCode != TS_HTTP_OK ) delay(TRX_RETRY_DELAY);
+      } while ( not( (tsReturnCode == TS_HTTP_OK) || (trxRetries > 3)) );
 
-        ThingSpeak.setField(1, rssi);
-        ThingSpeak.setField(2, temperatureInternal);
-        ThingSpeak.setField(3, umidityInternal);
-        ThingSpeak.setField(4, upTime);
-        ThingSpeak.setField(5, freeMem);
+      // Flush weather arrays
+      /*
+        for (int i = 0; i < READ_TO_TRX_RATIO; ++i) {
+        windValues[i] = WIND_ARRAY_FILLER;
+        rainValues[i] = false;
 
-        trxRetries = 0;
-        do {
-          tsReturnCode = ThingSpeak.writeFields(tsInternalsChannelID, tsInternalsWriteAPIKey);
-          trxRetries++;
-          if ( tsReturnCode != TS_HTTP_OK ) delay(TRX_RETRY_DELAY);
-        } while ( not( (tsReturnCode == TS_HTTP_OK) || (trxRetries > 3)) );
+        // For debugging
+        //sprintf(webDebugOutput + strlen(webDebugOutput), "When flushing: %u %u %f \n", currentReadMillis, i, windValues[i]);
 
-        readCycles = 0;
-
-        // Flush weather values
-        for (int i = 0; i < READ_TO_TRX_RATIO; i++) {
-          windValues[i] = -1;
-          rainValues[i] = false;
         }
-      }
+      */
+      //  readCycles = 0;
     }
-    readCycles++;
-    prevRainValue = boolOfArray(rainValues);
-    //prevStrongWind = strongWind;
+    // Reset readCycles also while not transmitting to ThingSpeak to avoid it going beyond limit
+    if ( readCycles >= READ_TO_TRX_RATIO ) {
+      readCycles = 0;
+    }
   }
-  // Web server for for debugging
-  /* listenForWebClients(); */
 }
+
 
