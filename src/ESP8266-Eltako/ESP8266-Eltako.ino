@@ -36,6 +36,7 @@
 #define TS_HTTP_OK 200                // HTTP 200 return code from ThingSpeak
 #define MEM_LOWER_LIMIT 10000         // Heap memory limit under which ESP is restarted
 #define WIND_ARRAY_FILLER -1.0        // Value to fill wind array with at initialization
+#define MAX_REALISTIC_WINDSPEED 50   // Maximum realistic windspeed in m/s beyond which we assume reading is buggy
 
 
 // Initialize the Wifi client library. Necessary for ThingSpeak to work.
@@ -316,8 +317,14 @@ void loop()
     if ( weatherArrayIndex > WEATHER_BUFFER ) {
       weatherArrayIndex = 0;
     }
-    windValues[weatherArrayIndex] = windspeed;
     rainValues[weatherArrayIndex] = rain;
+    // Sometimes windspeed reading is buggy and returns approx. 2000; if so, enter 0 in array instead of actual reading
+    if ( (windspeed >= 0) && (windspeed < MAX_REALISTIC_WINDSPEED) ) {
+      windValues[weatherArrayIndex] = windspeed;
+    }
+    else {
+      windValues[weatherArrayIndex] = 0;
+    }
     weatherArrayIndex++;
 
     // For debugging
